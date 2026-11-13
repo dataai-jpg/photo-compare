@@ -1,6 +1,6 @@
 // Service worker: caches the app shell so it installs and opens offline.
 // API calls (cross-origin POSTs to Apps Script) always go to the network.
-const VERSION = 'v2';
+const VERSION = 'v3';
 const CACHE = 'photo-compare-' + VERSION;
 const SHELL = [
   './', 'index.html', 'config.js', 'manifest.webmanifest',

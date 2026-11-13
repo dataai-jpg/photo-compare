@@ -81,6 +81,16 @@ button:focus-visible{outline:3px solid var(--primary);outline-offset:2px}
 a.link{display:inline-block;margin-top:10px;color:var(--primary);font-size:.85rem;min-height:24px}
 .banner{display:none;position:sticky;top:0;z-index:5;margin-bottom:12px;padding:10px 14px;border-radius:10px;background:#fff3cd;color:#664d03;font-size:.9rem}
 .note{color:var(--muted);font-size:.8rem}
+/* camera + picker */
+.pickrow{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pick{position:relative}
+.modal{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.88);display:flex;align-items:center;justify-content:center;padding:max(12px,env(safe-area-inset-top)) 12px max(12px,env(safe-area-inset-bottom))}
+.modal[hidden]{display:none}
+.modal-box{width:min(100%,720px);display:flex;flex-direction:column;gap:12px}
+.modal video{width:100%;max-height:70vh;background:#000;border-radius:12px;object-fit:contain}
+.modal-row{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+.modal .ghost{background:#fff;color:#1f2a33;border-color:#fff}
+.modal .hint{color:#ddd;text-align:center;min-height:1.2em}
 /* tablet */
 @media (max-width:1024px){.container{max-width:860px}}
 /* phone */
@@ -107,14 +117,22 @@ a.link{display:inline-block;margin-top:10px;color:var(--primary);font-size:.85re
     <div class="grid">
       <div class="drop" id="drop1">
         <h3>Photo 1</h3>
-        <label class="pick"><span>Choose or take photo</span><input type="file" id="photo1" accept="image/*"></label>
+        <div class="pickrow">
+          <label class="pick"><span>Choose photo</span><input type="file" id="photo1" accept="image/*"></label>
+          <button type="button" class="pick camBtn" data-n="1">Take photo</button>
+        </div>
+        <input type="file" id="cam1" accept="image/*" capture="environment" hidden>
         <p class="hint">or drop an image here</p>
         <img id="preview1" class="preview" alt="Photo 1 preview">
         <div id="fname1" class="fname"></div>
       </div>
       <div class="drop" id="drop2">
         <h3>Photo 2</h3>
-        <label class="pick"><span>Choose or take photo</span><input type="file" id="photo2" accept="image/*"></label>
+        <div class="pickrow">
+          <label class="pick"><span>Choose photo</span><input type="file" id="photo2" accept="image/*"></label>
+          <button type="button" class="pick camBtn" data-n="2">Take photo</button>
+        </div>
+        <input type="file" id="cam2" accept="image/*" capture="environment" hidden>
         <p class="hint">or drop an image here</p>
         <img id="preview2" class="preview" alt="Photo 2 preview">
         <div id="fname2" class="fname"></div>
@@ -171,6 +189,17 @@ a.link{display:inline-block;margin-top:10px;color:var(--primary);font-size:.85re
       <div class="row"><button id="saveButton" class="save" disabled>Save to Google Sheets</button></div>
       <div id="saveStatus" class="status" role="status" aria-live="polite"></div>
     </section>
+  </div>
+</div>
+<div id="camModal" class="modal" hidden role="dialog" aria-modal="true" aria-label="Camera">
+  <div class="modal-box">
+    <video id="camVideo" autoplay playsinline muted></video>
+    <p id="camErr" class="hint"></p>
+    <div class="modal-row">
+      <button id="camShot" class="primary" type="button">Capture</button>
+      <button id="camSwitch" class="ghost" type="button">Switch camera</button>
+      <button id="camCancel" class="ghost" type="button">Cancel</button>
+    </div>
   </div>
 </div>
 <button id="installBtn" type="button">Install app</button>
@@ -278,13 +307,14 @@ a.link{display:inline-block;margin-top:10px;color:var(--primary);font-size:.85re
   }
   [1, 2].forEach(function (n) {
     $('photo' + n).addEventListener('change', function (e) { setFile(n, e.target.files && e.target.files[0]); });
+    $('cam' + n).addEventListener('change', function (e) { setFile(n, e.target.files && e.target.files[0]); });
     var drop = $('drop' + n);
     ['dragenter', 'dragover'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('over'); }); });
     ['dragleave', 'drop'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('over'); }); });
     drop.addEventListener('drop', function (e) { var f = e.dataTransfer && e.dataTransfer.files[0]; if (f) setFile(n, f); });
   });
   $('resetButton').addEventListener('click', function () {
-    [1, 2].forEach(function (n) { $('photo' + n).value = ''; setFile(n, null); });
+    [1, 2].forEach(function (n) { $('photo' + n).value = ''; $('cam' + n).value = ''; setFile(n, null); });
     hideStatus('status');
   });
 
@@ -330,10 +360,11 @@ a.link{display:inline-block;margin-top:10px;color:var(--primary);font-size:.85re
     return loadBitmap(file).then(function (bmp) {
       var upload = makeCanvas(bmp, MAX_DIMENSION, true);
       var sample = makeCanvas(bmp, COLOR_SAMPLE, false);
+      var thumb = makeCanvas(bmp, 96, true).toDataURL('image/jpeg', 0.6);
       if (bmp.close) bmp.close();
       var color = analyzeDominantColor(sample);
       return canvasToBase64(upload).then(function (enc) {
-        return { photo: { fileName: file.name.replace(/\.[^.]+$/, '') + '.jpg', mimeType: 'image/jpeg', data: enc.b64 }, blob: enc.blob, color: color };
+        return { photo: { fileName: file.name.replace(/\.[^.]+$/, '') + '.jpg', mimeType: 'image/jpeg', data: enc.b64 }, blob: enc.blob, thumb: thumb, color: color };
       });
     });
   }
@@ -397,6 +428,52 @@ a.link{display:inline-block;margin-top:10px;color:var(--primary);font-size:.85re
   }
   function rgbToHex(r, g, b) { return '#' + [r, g, b].map(function (v) { return v.toString(16).padStart(2, '0'); }).join(''); }
 
+  // ---------- camera capture ----------
+  var cam = { stream: null, n: 0, facing: 'environment' };
+  function stopStream() { if (cam.stream) { cam.stream.getTracks().forEach(function (t) { t.stop(); }); cam.stream = null; } }
+  function closeCam() { stopStream(); $('camVideo').srcObject = null; $('camModal').hidden = true; }
+  function startStream() {
+    stopStream();
+    return navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: cam.facing }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false
+    }).then(function (stream) {
+      cam.stream = stream;
+      var v = $('camVideo'); v.srcObject = stream;
+      return v.play().catch(function () {});
+    });
+  }
+  function openCamera(n) {
+    var canLive = window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
+    if (!canLive) { $('cam' + n).click(); return; }   // phone camera app via file input
+    cam.n = n; $('camErr').textContent = ''; $('camModal').hidden = false;
+    startStream().catch(function () { closeCam(); $('cam' + n).click(); });
+  }
+  document.querySelectorAll('.camBtn').forEach(function (b) {
+    b.addEventListener('click', function () { openCamera(Number(b.getAttribute('data-n'))); });
+  });
+  $('camCancel').addEventListener('click', closeCam);
+  $('camSwitch').addEventListener('click', function () {
+    cam.facing = cam.facing === 'environment' ? 'user' : 'environment';
+    startStream().catch(function () { $('camErr').textContent = 'Could not switch camera.'; });
+  });
+  $('camShot').addEventListener('click', function () {
+    var v = $('camVideo');
+    if (!v.videoWidth) { $('camErr').textContent = 'Camera is not ready yet.'; return; }
+    var c = document.createElement('canvas');
+    c.width = v.videoWidth; c.height = v.videoHeight;
+    c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+    c.toBlob(function (blob) {
+      if (!blob) { $('camErr').textContent = 'Could not capture the photo.'; return; }
+      var d = new Date(), pad = function (x) { return String(x).padStart(2, '0'); };
+      var name = 'camera-' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds()) + '.jpg';
+      var n = cam.n;
+      closeCam();
+      setFile(n, new File([blob], name, { type: 'image/jpeg' }));
+    }, 'image/jpeg', 0.92);
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('camModal').hidden) closeCam(); });
+  window.addEventListener('pagehide', stopStream);
+
   // ---------- compare flow ----------
   $('compareButton').addEventListener('click', function () {
     if (state.busy || !(state.files[0] && state.files[1])) return;
@@ -424,6 +501,7 @@ a.link{display:inline-block;margin-top:10px;color:var(--primary);font-size:.85re
         color.similarity = colorSimilarity(color.color1, color.color2);
         render(o.resp, color);
         state.payload = buildPayload(o.resp, color);
+        state.thumbs = [o.prep[0].thumb, o.prep[1].thumb];
         setStatus('status', 'Comparison completed successfully.', 'success');
       })
       .catch(function (e) { setStatus('status', e.message || String(e), 'error'); })
@@ -467,7 +545,7 @@ a.link{display:inline-block;margin-top:10px;color:var(--primary);font-size:.85re
     if (state.saving || state.saved || !state.payload) return;
     var canQueue = !!(window.Offline && CFG.apiUrl);
     function queueIt() {
-      return Offline.enqueue(state.payload).then(function () {
+      return Offline.enqueue(state.payload, state.thumbs).then(function () {
         state.saved = true;
         $('saveButton').textContent = 'Queued for sync';
         setStatus('saveStatus', 'Saved on this device. It will upload to Google Sheets automatically when you are back online.', 'success');
@@ -490,6 +568,7 @@ a.link{display:inline-block;margin-top:10px;color:var(--primary);font-size:.85re
     callServer('saveComparisonToSheet', state.payload).then(function (r) {
       if (!r || !r.success) throw new Error((r && r.message) || 'Unable to save the comparison.');
       state.saved = true;
+      if (window.Offline) Offline.addRecord(state.payload, 'synced', state.thumbs);
       $('saveButton').textContent = 'Saved to Google Sheets';
       setStatus('saveStatus', r.message + ' Record ID: ' + r.id, 'success');
     }).catch(function (e) {
