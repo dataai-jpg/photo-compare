@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Photo Content Comparison</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1565c0">
+<meta name="description" content="Compare text and dominant color of two photos.">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Photo Compare">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<script src="config.js"></script>
+<script src="vendor/tesseract.min.js"></script>
+<script src="offline.js"></script>
+<style>
+#installBtn{display:none;position:fixed;right:max(16px,env(safe-area-inset-right));bottom:max(16px,env(safe-area-inset-bottom));z-index:10;
+  background:var(--primary);color:#fff;border-radius:999px;padding:12px 20px;box-shadow:0 4px 16px rgba(0,0,0,.25)}
+#updateBar{display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:max(16px,env(safe-area-inset-bottom));z-index:11;
+  background:#263238;color:#fff;padding:10px 14px;border-radius:12px;gap:12px;align-items:center;box-shadow:0 4px 16px rgba(0,0,0,.3)}
+#updateBar button{min-height:36px;padding:6px 14px;background:#4d94e8;color:#fff}
+</style>
+<style>
+:root{
+  --bg:#f4f6f9;--surface:#fff;--surface2:#f5f8fc;--border:#e2e8ef;--text:#1f2a33;--muted:#5f7280;
+  --primary:#1565c0;--primary-d:#0d47a1;--ok:#188038;--ok-bg:#e8f5e9;--err:#b71c1c;--err-bg:#ffebee;--info-bg:#e3f2fd;
+  --radius:14px;--shadow:0 2px 12px rgba(0,0,0,.06);--gutter:clamp(12px,3vw,28px);
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#0f1418;--surface:#182027;--surface2:#1e2830;--border:#2b3843;--text:#e6edf2;--muted:#93a4b1;
+    --primary:#4d94e8;--primary-d:#6aa8ee;--ok:#5cc47a;--ok-bg:#16301f;--err:#ff8a80;--err-bg:#3a1b1b;--info-bg:#14273d;--shadow:none}
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+  padding:max(var(--gutter),env(safe-area-inset-top)) max(var(--gutter),env(safe-area-inset-right)) max(var(--gutter),env(safe-area-inset-bottom)) max(var(--gutter),env(safe-area-inset-left))}
+.container{max-width:1100px;margin:0 auto}
+.header{background:var(--primary);color:#fff;padding:clamp(16px,3vw,26px);border-radius:var(--radius);margin-bottom:18px}
+.header h1{margin:0 0 6px;font-size:clamp(1.25rem,2.6vw,1.65rem)}
+.header p{margin:0;opacity:.92;font-size:.95rem}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:clamp(14px,2.4vw,22px);margin-bottom:18px;box-shadow:var(--shadow)}
+h2.section-title{margin:0 0 14px;font-size:1.15rem}
+h3{margin:0 0 8px;font-size:1rem}
+.grid{display:grid;gap:16px;grid-template-columns:repeat(2,minmax(0,1fr))}
+.grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.drop{border:2px dashed var(--border);border-radius:12px;padding:16px;background:var(--surface2);transition:border-color .15s,background .15s;min-width:0}
+.drop.over{border-color:var(--primary);background:var(--info-bg)}
+.pick{display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--primary);font-weight:600;cursor:pointer;padding:10px 14px;text-align:center}
+.pick:focus-within{outline:3px solid var(--primary)}
+.pick input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.hint{font-size:.8rem;color:var(--muted);margin:8px 0 0}
+.preview{display:none;width:100%;max-height:260px;object-fit:contain;background:var(--bg);border-radius:10px;margin-top:12px}
+.fname{font-size:.8rem;color:var(--muted);margin-top:6px;overflow-wrap:anywhere}
+button{font:inherit;font-weight:600;border:0;border-radius:10px;padding:12px 22px;min-height:48px;cursor:pointer;touch-action:manipulation}
+button:disabled{opacity:.5;cursor:not-allowed}
+button:focus-visible{outline:3px solid var(--primary);outline-offset:2px}
+.primary{background:var(--primary);color:#fff}
+.save{background:var(--ok);color:#fff}
+.ghost{background:transparent;color:var(--primary);border:1px solid var(--border)}
+.row{display:flex;flex-wrap:wrap;gap:12px;margin-top:16px}
+.status{display:none;margin-top:14px;padding:12px 14px;border-radius:8px;overflow-wrap:anywhere}
+.status.info{display:block;background:var(--info-bg);color:var(--primary-d)}
+.status.error{display:block;background:var(--err-bg);color:var(--err)}
+.status.success{display:block;background:var(--ok-bg);color:var(--ok)}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px;margin-right:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spinner{animation:none}}
+#result{display:none}
+.score{padding:18px 10px;text-align:center;background:var(--surface2);border:1px solid var(--border);border-radius:12px}
+.score strong{display:block;font-size:clamp(1.5rem,4vw,1.9rem);color:var(--primary)}
+.score span{color:var(--muted);font-size:.8rem;display:block}
+.bar{height:6px;border-radius:3px;background:var(--border);margin-top:10px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--primary);width:0;transition:width .5s}
+.swatch{height:90px;border-radius:9px;border:1px solid var(--border);margin-bottom:10px}
+.detail{color:var(--muted);font-size:.85rem;overflow-wrap:anywhere}
+.panel{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;min-width:0}
+.pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:280px;overflow:auto;font-size:.85rem;line-height:1.55}
+a.link{display:inline-block;margin-top:10px;color:var(--primary);font-size:.85rem;min-height:24px}
+.banner{display:none;position:sticky;top:0;z-index:5;margin-bottom:12px;padding:10px 14px;border-radius:10px;background:#fff3cd;color:#664d03;font-size:.9rem}
+.note{color:var(--muted);font-size:.8rem}
+/* tablet */
+@media (max-width:1024px){.container{max-width:860px}}
+/* phone */
+@media (max-width:640px){
+  .grid,.grid.three{grid-template-columns:1fr}
+  .row button{flex:1 1 100%}
+  .preview{max-height:220px}
+}
+/* phone landscape / tiny */
+@media (max-width:640px) and (orientation:landscape){.grid.three{grid-template-columns:repeat(3,1fr)}}
+</style>
+</head>
+<body>
+<div class="container">
+  <div id="offline" class="banner" role="status">You are offline. Comparing and saving need an internet connection.</div>
+
+  <header class="header">
+    <h1>Photo Content Comparison</h1>
+    <p>Compare the text and dominant color of two photos. Overall similarity = 50% text + 50% color.</p>
+  </header>
+
+  <section class="card">
+    <h2 class="section-title">Upload photos</h2>
+    <div class="grid">
+      <div class="drop" id="drop1">
+        <h3>Photo 1</h3>
+        <label class="pick"><span>Choose or take photo</span><input type="file" id="photo1" accept="image/*"></label>
+        <p class="hint">or drop an image here</p>
+        <img id="preview1" class="preview" alt="Photo 1 preview">
+        <div id="fname1" class="fname"></div>
+      </div>
+      <div class="drop" id="drop2">
+        <h3>Photo 2</h3>
+        <label class="pick"><span>Choose or take photo</span><input type="file" id="photo2" accept="image/*"></label>
+        <p class="hint">or drop an image here</p>
+        <img id="preview2" class="preview" alt="Photo 2 preview">
+        <div id="fname2" class="fname"></div>
+      </div>
+    </div>
+    <div class="row">
+      <button id="compareButton" class="primary" disabled>Compare Photos</button>
+      <button id="resetButton" class="ghost" type="button">Reset</button>
+    </div>
+    <label id="engineRow" class="note" style="display:none;margin-top:12px"><input type="checkbox" id="useGoogle"> Use Google Drive OCR when online (more accurate, needs a connection)</label>
+    <div id="status" class="status" role="status" aria-live="polite"></div>
+    <p class="note">Images are analyzed as a whole and resized to speed things up. Background colors can affect dominant-color results.</p>
+  </section>
+
+  <div id="result">
+    <section class="card">
+      <h2 class="section-title">Similarity results</h2>
+      <div class="grid three">
+        <div class="score"><strong id="overallScore">0%</strong><span>Overall (50% text + 50% color)</span><div class="bar"><i id="overallBar"></i></div></div>
+        <div class="score"><strong id="textScore">0%</strong><span>Text similarity</span><div class="bar"><i id="textBar"></i></div></div>
+        <div class="score"><strong id="colorScore">0%</strong><span>Dominant color similarity</span><div class="bar"><i id="colorBar"></i></div></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">Dominant color</h2>
+      <div class="grid">
+        <div class="panel"><h3>Photo 1</h3><div id="swatch1" class="swatch"></div><strong id="colorName1">-</strong>
+          <div class="detail">HEX: <span id="hex1">-</span><br>Pixel share: <span id="share1">-</span></div></div>
+        <div class="panel"><h3>Photo 2</h3><div id="swatch2" class="swatch"></div><strong id="colorName2">-</strong>
+          <div class="detail">HEX: <span id="hex2">-</span><br>Pixel share: <span id="share2">-</span></div></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">Extracted text</h2>
+      <div class="grid">
+        <div class="panel"><h3>Photo 1</h3><div id="text1" class="pre"></div><a id="file1Link" class="link" target="_blank" rel="noopener">Open Photo 1 in Google Drive</a></div>
+        <div class="panel"><h3>Photo 2</h3><div id="text2" class="pre"></div><a id="file2Link" class="link" target="_blank" rel="noopener">Open Photo 2 in Google Drive</a></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">Text differences</h2>
+      <div class="grid">
+        <div class="panel"><h3>Only in Photo 1</h3><div id="diff1" class="pre"></div></div>
+        <div class="panel"><h3>Only in Photo 2</h3><div id="diff2" class="pre"></div></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">Save comparison</h2>
+      <p>Save this comparison to the Google Sheets <strong>OCR</strong> worksheet.</p>
+      <div class="row"><button id="saveButton" class="save" disabled>Save to Google Sheets</button></div>
+      <div id="saveStatus" class="status" role="status" aria-live="polite"></div>
+    </section>
+  </div>
+</div>
+<button id="installBtn" type="button">Install app</button>
+<div id="updateBar" role="status">New version available <button id="reloadBtn" type="button">Reload</button></div>
+<script>
+(function(){
+  var deferred=null,btn=document.getElementById('installBtn');
+  window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();deferred=e;btn.style.display='block';});
+  btn.addEventListener('click',function(){if(!deferred)return;deferred.prompt();deferred.userChoice.then(function(){deferred=null;btn.style.display='none';});});
+  window.addEventListener('appinstalled',function(){btn.style.display='none';});
+
+  if('serviceWorker' in navigator){
+    window.addEventListener('load',function(){
+      navigator.serviceWorker.register('sw.js').then(function(reg){
+        reg.addEventListener('updatefound',function(){
+          var nw=reg.installing;
+          nw.addEventListener('statechange',function(){
+            if(nw.state==='installed'&&navigator.serviceWorker.controller){
+              var bar=document.getElementById('updateBar');bar.style.display='flex';
+              document.getElementById('reloadBtn').onclick=function(){nw.postMessage('SKIP_WAITING');};
+            }
+          });
+        });
+      });
+      var reloaded=false;
+      navigator.serviceWorker.addEventListener('controllerchange',function(){if(reloaded)return;reloaded=true;location.reload();});
+    });
+  }
+})();
+</script>
+
+<script>
+(function () {
+  'use strict';
+
+  var CFG = window.APP_CONFIG || {};
+  var MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+  var MAX_DIMENSION = 1800;     // longest side sent to OCR
+  var JPEG_QUALITY = 0.88;
+  var COLOR_SAMPLE = 200;       // longest side used for color analysis
+
+  var $ = function (id) { return document.getElementById(id); };
+  var state = { files: [null, null], busy: false, saving: false, saved: false, payload: null, urls: [null, null] };
+
+  // ---------- transport (Apps Script iframe OR fetch API for the hosted PWA) ----------
+  function callServer(fn, arg) {
+    return new Promise(function (resolve, reject) {
+      if (window.google && google.script && google.script.run) {
+        google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(function (e) { reject(new Error((e && e.message) || 'Server error.')); })
+          [fn](arg);
+        return;
+      }
+      if (!CFG.apiUrl) { reject(new Error('apiUrl is not configured in APP_CONFIG.')); return; }
+      fetch(CFG.apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // avoids CORS preflight
+        body: JSON.stringify({ action: fn, key: CFG.apiKey || '', payload: arg })
+      }).then(function (r) {
+        if (!r.ok) throw new Error('Server responded with ' + r.status + '.');
+        return r.json();
+      }).then(resolve, reject);
+    });
+  }
+
+  window.__callServer = callServer;
+  function wantGoogle() { var c = $('useGoogle'); return !!(c && c.checked); }
+  function isNetworkError(e) { return e instanceof TypeError || /Failed to fetch|NetworkError|Load failed|offline/i.test(String(e && e.message)); }
+  function uid() { return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'id-' + Date.now() + '-' + Math.random().toString(16).slice(2); }
+
+  // ---------- UI helpers ----------
+  function setStatus(id, msg, kind, spin) {
+    var el = $(id);
+    el.className = 'status ' + kind;
+    el.textContent = '';
+    if (spin) { var s = document.createElement('span'); s.className = 'spinner'; el.appendChild(s); }
+    el.appendChild(document.createTextNode(msg));
+  }
+  function hideStatus(id) { $(id).className = 'status'; }
+  function refreshButtons() {
+    $('compareButton').disabled = state.busy || !(state.files[0] && state.files[1]);
+    $('saveButton').disabled = state.saving || state.saved || !state.payload;
+  }
+  function invalidate() {
+    state.payload = null; state.saved = false;
+    $('result').style.display = 'none';
+    $('saveButton').textContent = 'Save to Google Sheets';
+    hideStatus('saveStatus');
+    refreshButtons();
+  }
+
+  // ---------- file selection ----------
+  function setFile(n, file) {
+    var idx = n - 1, img = $('preview' + n);
+    if (state.urls[idx]) { URL.revokeObjectURL(state.urls[idx]); state.urls[idx] = null; }
+    if (!file) { state.files[idx] = null; img.style.display = 'none'; img.removeAttribute('src'); $('fname' + n).textContent = ''; invalidate(); return; }
+    if (!/^image\//.test(file.type)) { setStatus('status', 'Please select a valid image file.', 'error'); return; }
+    state.files[idx] = file;
+    state.urls[idx] = URL.createObjectURL(file);
+    img.src = state.urls[idx]; img.style.display = 'block';
+    $('fname' + n).textContent = file.name + ' (' + (file.size / 1024 / 1024).toFixed(2) + ' MB)';
+    hideStatus('status');
+    invalidate();
+  }
+  [1, 2].forEach(function (n) {
+    $('photo' + n).addEventListener('change', function (e) { setFile(n, e.target.files && e.target.files[0]); });
+    var drop = $('drop' + n);
+    ['dragenter', 'dragover'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('over'); }); });
+    ['dragleave', 'drop'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('over'); }); });
+    drop.addEventListener('drop', function (e) { var f = e.dataTransfer && e.dataTransfer.files[0]; if (f) setFile(n, f); });
+  });
+  $('resetButton').addEventListener('click', function () {
+    [1, 2].forEach(function (n) { $('photo' + n).value = ''; setFile(n, null); });
+    hideStatus('status');
+  });
+
+  // ---------- image processing (decode once, resize for OCR, sample for color) ----------
+  function loadBitmap(file) {
+    if (window.createImageBitmap) {
+      return createImageBitmap(file).catch(function () { return loadViaImg(file); });
+    }
+    return loadViaImg(file);
+  }
+  function loadViaImg(file) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onload = function () { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('Unable to read "' + file.name + '" as an image.')); };
+      img.src = url;
+    });
+  }
+  function dims(src) { return { w: src.naturalWidth || src.width, h: src.naturalHeight || src.height }; }
+  function makeCanvas(src, maxDim, fillWhite) {
+    var d = dims(src), scale = Math.min(1, maxDim / Math.max(d.w, d.h));
+    var c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(d.w * scale)); c.height = Math.max(1, Math.round(d.h * scale));
+    var ctx = c.getContext('2d', { willReadFrequently: !fillWhite });
+    if (fillWhite) { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); }
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(src, 0, 0, c.width, c.height);
+    return c;
+  }
+  function canvasToBase64(canvas) {
+    return new Promise(function (resolve, reject) {
+      canvas.toBlob(function (blob) {
+        if (!blob) { reject(new Error('Unable to encode image.')); return; }
+        if (blob.size > MAX_UPLOAD_BYTES) { reject(new Error('Image is still larger than 10 MB after resizing.')); return; }
+        var fr = new FileReader();
+        fr.onload = function () { resolve({ b64: String(fr.result).split(',')[1], blob: blob }); };
+        fr.onerror = function () { reject(new Error('Unable to read the resized image.')); };
+        fr.readAsDataURL(blob);
+      }, 'image/jpeg', JPEG_QUALITY);
+    });
+  }
+  function prepareImage(file) {
+    return loadBitmap(file).then(function (bmp) {
+      var upload = makeCanvas(bmp, MAX_DIMENSION, true);
+      var sample = makeCanvas(bmp, COLOR_SAMPLE, false);
+      if (bmp.close) bmp.close();
+      var color = analyzeDominantColor(sample);
+      return canvasToBase64(upload).then(function (enc) {
+        return { photo: { fileName: file.name.replace(/\.[^.]+$/, '') + '.jpg', mimeType: 'image/jpeg', data: enc.b64 }, blob: enc.blob, color: color };
+      });
+    });
+  }
+
+  // ---------- color analysis (unchanged logic) ----------
+  function analyzeDominantColor(canvas) {
+    var ctx = canvas.getContext('2d', { willReadFrequently: true });
+    var px = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    var buckets = Object.create(null), total = 0;
+    for (var i = 0; i < px.length; i += 4) {
+      if (px[i + 3] < 20) continue;
+      var r = px[i], g = px[i + 1], b = px[i + 2], name = classifyPixel(r, g, b);
+      var k = buckets[name] || (buckets[name] = { count: 0, r: 0, g: 0, b: 0 });
+      k.count++; k.r += r; k.g += g; k.b += b; total++;
+    }
+    if (!total) throw new Error('Unable to analyze image pixels.');
+    var best = '', bestCount = 0;
+    Object.keys(buckets).forEach(function (n) { if (buckets[n].count > bestCount) { best = n; bestCount = buckets[n].count; } });
+    var d = buckets[best];
+    var rgb = { r: Math.round(d.r / d.count), g: Math.round(d.g / d.count), b: Math.round(d.b / d.count) };
+    return { name: best, family: best, hex: rgbToHex(rgb.r, rgb.g, rgb.b), rgb: rgb, lab: rgbToLab(rgb.r, rgb.g, rgb.b), share: bestCount / total * 100 };
+  }
+  function classifyPixel(r, g, b) {
+    var max = Math.max(r, g, b), min = Math.min(r, g, b), delta = max - min;
+    var sat = max === 0 ? 0 : delta / max * 100;
+    if (max <= 65) return 'Black';
+    if (sat <= 35) { if (max >= 220) return 'White'; if (max <= 125) return 'Dark Gray'; return 'Gray'; }
+    if (max <= 105 && sat <= 90) return 'Dark Gray';
+    var hue = 0;
+    if (delta !== 0) {
+      if (max === r) hue = 60 * (((g - b) / delta) % 6);
+      else if (max === g) hue = 60 * ((b - r) / delta + 2);
+      else hue = 60 * ((r - g) / delta + 4);
+    }
+    if (hue < 0) hue += 360;
+    if (hue < 5 || hue >= 350) return 'Red';
+    if (hue < 15) return 'Red-Orange';
+    if (hue < 22) return 'Orange';
+    if (hue < 32) return 'Yellow';
+    if (hue < 40) return 'Yellow-Green';
+    if (hue < 80) return 'Green';
+    if (hue < 95) return 'Cyan';
+    if (hue < 130) return 'Blue';
+    if (hue < 150) return 'Violet';
+    if (hue < 165) return 'Magenta';
+    return 'Pink-Red';
+  }
+  function colorSimilarity(a, b) {
+    if (a.family === b.family) return 100;
+    var dE = Math.sqrt(Math.pow(a.lab.L - b.lab.L, 2) + Math.pow(a.lab.a - b.lab.a, 2) + Math.pow(a.lab.b - b.lab.b, 2));
+    return Math.max(0, Math.min(100, 100 - dE));
+  }
+  function pivotRgb(v) { return v > 0.04045 ? Math.pow((v + 0.055) / 1.055, 2.4) : v / 12.92; }
+  function pivotXyz(v) { return v > 0.008856 ? Math.pow(v, 1 / 3) : 7.787 * v + 16 / 116; }
+  function rgbToLab(r, g, b) {
+    r = pivotRgb(r / 255); g = pivotRgb(g / 255); b = pivotRgb(b / 255);
+    var x = pivotXyz((r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.95047);
+    var y = pivotXyz(r * 0.2126 + g * 0.7152 + b * 0.0722);
+    var z = pivotXyz((r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.08883);
+    return { L: Math.max(0, 116 * y - 16), a: 500 * (x - y), b: 200 * (y - z) };
+  }
+  function rgbToHex(r, g, b) { return '#' + [r, g, b].map(function (v) { return v.toString(16).padStart(2, '0'); }).join(''); }
+
+  // ---------- compare flow ----------
+  $('compareButton').addEventListener('click', function () {
+    if (state.busy || !(state.files[0] && state.files[1])) return;
+    var local = !!(window.Offline && Offline.ready() && (!navigator.onLine || !wantGoogle()));
+    if (!local && !navigator.onLine) {
+      setStatus('status', window.Offline ? 'On-device OCR files are missing (see README, step "Download OCR files"). Reconnect to use Google OCR.' : 'You are offline. Please reconnect and try again.', 'error');
+      return;
+    }
+    state.busy = true; invalidate(); refreshButtons();
+    setStatus('status', 'Preparing images and analyzing colors...', 'info', true);
+
+    Promise.all([prepareImage(state.files[0]), prepareImage(state.files[1])])
+      .then(function (prep) {
+        if (local) {
+          setStatus('status', 'Reading text on this device...', 'info', true);
+          return Offline.compare(prep, function (m) { setStatus('status', m, 'info', true); })
+            .then(function (resp) { return { resp: resp, prep: prep }; });
+        }
+        setStatus('status', 'Extracting text (this can take a few seconds)...', 'info', true);
+        return callServer('comparePhotos', { photo1: prep[0].photo, photo2: prep[1].photo }).then(function (resp) { return { resp: resp, prep: prep }; });
+      })
+      .then(function (o) {
+        if (!o.resp || !o.resp.success) throw new Error((o.resp && o.resp.message) || 'Photo comparison failed.');
+        var color = { color1: o.prep[0].color, color2: o.prep[1].color };
+        color.similarity = colorSimilarity(color.color1, color.color2);
+        render(o.resp, color);
+        state.payload = buildPayload(o.resp, color);
+        setStatus('status', 'Comparison completed successfully.', 'success');
+      })
+      .catch(function (e) { setStatus('status', e.message || String(e), 'error'); })
+      .then(function () { state.busy = false; refreshButtons(); });
+  });
+
+  function pct(n) { return Number(n).toFixed(2) + '%'; }
+  function setScore(idText, idBar, v) { $(idText).textContent = pct(v); $(idBar).style.width = Math.max(0, Math.min(100, v)) + '%'; }
+  function render(resp, color) {
+    var text = Number(resp.textSimilarity), col = Number(color.similarity), overall = text * 0.5 + col * 0.5;
+    $('result').style.display = 'block';
+    setScore('overallScore', 'overallBar', overall); setScore('textScore', 'textBar', text); setScore('colorScore', 'colorBar', col);
+    [1, 2].forEach(function (n) {
+      var c = color['color' + n];
+      $('swatch' + n).style.background = c.hex;
+      $('colorName' + n).textContent = c.name;
+      $('hex' + n).textContent = c.hex.toUpperCase();
+      $('share' + n).textContent = c.share.toFixed(2) + '% of sampled pixels';
+      $('text' + n).textContent = resp['photo' + n].extractedText || 'No text detected.';
+      var lk = $('file' + n + 'Link'), u = resp['photo' + n].url;
+      if (u) { lk.href = u; lk.style.display = ''; } else { lk.removeAttribute('href'); lk.style.display = 'none'; }
+    });
+    $('diff1').textContent = resp.textDifferences.onlyInPhoto1.join(', ') || 'No differences.';
+    $('diff2').textContent = resp.textDifferences.onlyInPhoto2.join(', ') || 'No differences.';
+    $('result').scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  }
+  function buildPayload(resp, color) {
+    var text = Number(resp.textSimilarity), col = Number(color.similarity), overall = text * 0.5 + col * 0.5;
+    function slim(p) { return { fileId: p.fileId, filePath: p.filePath, fileName: p.fileName, extractedText: p.extractedText || '' }; }
+    return {
+      photo1: slim(resp.photo1), photo2: slim(resp.photo2),
+      clientId: uid(), comparedAt: new Date().toISOString(),
+      colorSimilarity: +col.toFixed(2), textSimilarity: +text.toFixed(2),
+      contentSimilarity: +overall.toFixed(2), overallSimilarity: +overall.toFixed(2),
+      onlyInPhoto1: resp.textDifferences.onlyInPhoto1, onlyInPhoto2: resp.textDifferences.onlyInPhoto2
+    };
+  }
+
+  // ---------- save flow ----------
+  $('saveButton').addEventListener('click', function () {
+    if (state.saving || state.saved || !state.payload) return;
+    var canQueue = !!(window.Offline && CFG.apiUrl);
+    function queueIt() {
+      return Offline.enqueue(state.payload).then(function () {
+        state.saved = true;
+        $('saveButton').textContent = 'Queued for sync';
+        setStatus('saveStatus', 'Saved on this device. It will upload to Google Sheets automatically when you are back online.', 'success');
+      });
+    }
+    function done() { state.saving = false; refreshButtons(); }
+    function fail(e) {
+      $('saveButton').textContent = 'Save to Google Sheets';
+      setStatus('saveStatus', e.message || 'An unexpected error occurred while saving.', 'error');
+    }
+
+    state.saving = true; refreshButtons();
+    if (!navigator.onLine) {
+      if (!canQueue) { fail(new Error('You are offline. Please reconnect and try again.')); done(); return; }
+      queueIt().catch(fail).then(done);
+      return;
+    }
+    $('saveButton').textContent = 'Saving...';
+    setStatus('saveStatus', 'Saving comparison to Google Sheets...', 'info', true);
+    callServer('saveComparisonToSheet', state.payload).then(function (r) {
+      if (!r || !r.success) throw new Error((r && r.message) || 'Unable to save the comparison.');
+      state.saved = true;
+      $('saveButton').textContent = 'Saved to Google Sheets';
+      setStatus('saveStatus', r.message + ' Record ID: ' + r.id, 'success');
+    }).catch(function (e) {
+      if (canQueue && isNetworkError(e)) return queueIt().catch(fail);
+      fail(e);
+    }).then(done);
+  });
+
+  // ---------- connectivity ----------
+  function updateOnline() { $('offline').style.display = navigator.onLine ? 'none' : 'block'; }
+  window.addEventListener('online', updateOnline); window.addEventListener('offline', updateOnline); updateOnline();
+})();
+</script>
+</body>
+</html>
